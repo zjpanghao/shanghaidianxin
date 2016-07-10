@@ -238,6 +238,9 @@ std::set<std::string> get_data_from_shanghai(int flag, std::string &last_update_
 		std::string url = url_ + index_str;
 		//std::cout<<url<<std::endl;
 		value = get_value_by_url(url);
+    if (flag == 0 && i < 10) {
+      printf("thread0 %d televalue:%s\n",i,value.c_str());
+  }
 		Json::Reader reader; 
 		Json::Value root;
 		if (!reader.parse(value, root)) 
