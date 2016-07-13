@@ -9,7 +9,8 @@
 
 #include "json_data.h"
 #include "KafkaWrapper.h"
-
+#include "tele_task_producer.h"
+#include "tele_task_consumer.h"
 using namespace std;
 
 wrapper_Info *test_info_g;
@@ -36,29 +37,18 @@ wrapper_Info * get_kafka_info_g() {
 int main(int argc, char* argv[])
 {
 		pthread_t tid[10] = {0};
-		int code;
+		int code = 0;
 		int i;
 		test_info_g = new wrapper_Info;
 		init_kafka(test_info_g);
-		
-		for (i = 0; i < 10; i++)
-		{
-				code = pthread_create(&tid[i], NULL, thread_function, (void*)i);
-				if (code != 0)
-				{
-						fprintf(stderr, "Create new thread failed: %s\n", strerror(code));
-						exit(1);
-				}
-				fprintf(stdout, "New thread created.\n");
-		}
+    pthread_t producerid;
+    std::string url_fetch_token = "http://61.129.39.71/telecom-dmp/getToken?apiKey=98f5103019170612fd3a486e3d872c48&sign=6a653929c81a24ba14e41e25b6047e5dec55e76e";
+    TeleTaskProducer::GetInstance()->Init(url_fetch_token);
+	  TeleTaskConsumer::GetInstance()->Init(10);	
 
-		for (i = 0; i < 10; i++)
-		{
-				pthread_join(tid[i],NULL);
-				fprintf(stderr, "Join thread 1 error: %s\n", strerror(code));
-				exit(1);
-		}
-
+    while (true) {
+      sleep(1024*1024);
+    }
 		return 0;
 }
 

@@ -64,7 +64,7 @@ std::string CurlWrapper::access_http(const char* szUrl)
 		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &responseCode);
 		if (responseCode < 200 || responseCode >= 300 || strData.empty())
 		{
-			std::cout << "code != CURLE_OK" << std::endl;
+			//std::cout << "code != CURLE_OK" << std::endl;
 		}
 	} else {
     printf("libcur error code %d\n", code);
