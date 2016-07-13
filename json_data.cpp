@@ -200,7 +200,7 @@ std::string get_value_by_url(const std::string &url)
 	}
 	return str;
 }
-
+#if 0
 int Uncompressbase64(const char*input, int inlen, unsigned char *output, int outlen) {
 	int len = 0;
 	BIO *b64,*bmem;
@@ -213,7 +213,7 @@ int Uncompressbase64(const char*input, int inlen, unsigned char *output, int out
 	BIO_free_all(bmem);
 	return len;
 }
-
+#endif
 std::set<std::string> get_data_from_shanghai(int flag, std::string &last_update_time)
 {
 	std::string url_ = "";
@@ -252,9 +252,9 @@ std::set<std::string> get_data_from_shanghai(int flag, std::string &last_update_
 		value = root["result"]["value"].asString();
 		if (value.length() == 0 || value.length() >= 100)
 			continue;
-		char base64result[256];
-		int len = Uncompressbase64(value.c_str(), value.length(), (unsigned char*)base64result, 255);
-		base64result[len] = 0;
+		char base64result[256]={0};
+	//	int len = Uncompressbase64(value.c_str(), value.length(), (unsigned char*)base64result, 255);
+	//	base64result[len] = 0;
 		value_base64 = base64result;
 		//value_base64 = base64_decode(value);
 		value_set.insert(base64result);
