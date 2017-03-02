@@ -3,10 +3,14 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include "glog/logging.h"
+#include "CurlWrapper.h"
 #include "json_data.h"
 #include "base64.h"
-#define BATCHNUMS 100
-#define MAX_TASK_QUEUE_SIZE 300 
+#include "tele_mat.h"
+#include "common.h"
+#define BATCHNUMS 200
+#define MAX_TASK_QUEUE_SIZE 600 
 #define MAX_FETCH_INDEX 10000
 TeleTaskProducer* TeleTaskProducer::instance_ = NULL;
 TeleTaskProducer* TeleTaskProducer::GetInstance() {
@@ -23,13 +27,16 @@ void TeleTaskProducer::SetIdentityError() {
 }
 
 bool TeleTaskProducer::UpdateToken() {
-  token_str_ = get_toKen_by_url(url_fetch_token_);
-  printf("The token %s\n", token_str_.c_str());
+  token_str_ = get_toKen_by_url(url_fetch_token_, cu_);
+  LOG(INFO) << "The token " << token_str_;
   need_update_token_ = false;
+  token_update_minutes_ = 0;
   return token_str_ == "" ? false : true;
 }
-bool TeleTaskProducer::Init(std::string url_fetch_token) {
+bool TeleTaskProducer::Init(std::string url_fetch_token, int delay_min) {
   url_fetch_token_ = url_fetch_token;
+  delay_min_ = delay_min;
+  cu_ = CurlWrapper::get_instance()->CreateCurl();
   UpdateToken(); 
   pthread_t producerid;
   pthread_create(&producerid, NULL, TeleTaskProducer::TeleProducerThread, NULL);
@@ -55,6 +62,14 @@ void *TeleTaskProducer::TeleProducerThread(void *arg) {
   return NULL;
 }
 
+void TeleTaskProducer::CheckTokenTimeout() {
+  token_update_minutes_++;
+  if (token_update_minutes_ >= 60) {
+    need_update_token_ = true;
+    token_update_minutes_ = 0;
+  }
+}
+
 void TeleTaskProducer::UpdateTask(const char *time_str) {
   pthread_mutex_lock(&task_lock_);
   fetch_time_str_ = time_str;
@@ -65,12 +80,15 @@ void TeleTaskProducer::UpdateTask(const char *time_str) {
     producer_queue_.pop();
     delete task;
   }
+  
+  CheckTokenTimeout();  
+
   if (need_update_token_) {
     UpdateToken();
   }
   pthread_mutex_unlock(&task_lock_);
 
-  printf("Update time to %s clear queue %d\n", time_str, size);
+  LOG(INFO) << "Update time to " << time_str << " clear queue " <<  size;
 }
 
 void TeleTaskProducer::BuildTeleTimeStr(struct tm *current_time, char *buffer) {
@@ -85,18 +103,23 @@ void TeleTaskProducer::BuildTeleTimeStr(struct tm *current_time, char *buffer) {
 void TeleTaskProducer::CheckandUpdateTask() {
   time_t seconds = time(NULL);
   struct tm current_tm;
-  localtime_r(&seconds, &current_tm); 
-  if (old_tm_->tm_sec < 30 && current_tm.tm_sec >=30 ) {
+  localtime_r(&seconds, &current_tm);
+  const int delay_min = delay_min_; 
+  if (old_tm_->tm_min != current_tm.tm_min ) {
     char time_str[13];
-    BuildTeleTimeStr(&current_tm, time_str);
+    time_t fetch_seconds = seconds - delay_min * 60;
+    struct tm fetch_tm;
+    localtime_r(&fetch_seconds, &fetch_tm);
+    BuildTeleTimeStr(&fetch_tm, time_str);
     UpdateTask(time_str); 
+    *old_tm_ = current_tm;
   }
-  *old_tm_ = current_tm;
 }
 TeleTaskProducer::TeleTaskProducer():fetch_time_str_("") {
   pthread_mutex_init(&task_lock_, NULL);
   pthread_cond_init(&not_empty_, NULL);
   old_tm_ = new struct tm;
+  time_t seconds = time(NULL);
   memset(old_tm_, 0, sizeof(struct tm));
 }
 
@@ -104,16 +127,33 @@ int TeleTaskProducer::PushTaskBatch() {
   int i;
   int n = 0;
   pthread_mutex_lock(&task_lock_); 
-    if (fetch_time_str_.length() != 12) {
-    printf("please wait for the fetch time str\n");
+  if (fetch_time_str_.length() != 12) {
+    LOG(INFO) << "please wait for the fetch time str";
     pthread_mutex_unlock(&task_lock_);
     return 0;
   }
+  char buf[4];
+  strcpy(buf, fetch_time_str_.c_str() + 10);
+  int minute = atoi(buf);
+  memset(buf, 0, sizeof(buf));
+  strncpy(buf, fetch_time_str_.c_str() + 8, 2);
+  int hour = atoi(buf);
+   
   for (i = index_; i < index_ + BATCHNUMS && i < MAX_FETCH_INDEX; i++) {
+    int minute_index = hour * 60 + minute;
+    if (!IsSlave()) {
+      CLEAR_SET(tele::GetShareMem(), minute_index, i);
+    } else if (IS_SET(tele::GetShareMem(), minute_index, i)) {
+      CLEAR_SET(tele::GetShareMem(), minute_index, i);
+      n++;
+      continue;
+    }
     TeleTask * task = new TeleTask;
+    task->minute_index = minute_index;
     task->index = i;
     task->token = token_str_;
     task->time_str = fetch_time_str_;
+    task->retry_count = 0;
     if (PushTask(task) < 0) {
       delete task;
       break;

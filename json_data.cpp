@@ -15,14 +15,18 @@
 #include "json_data.h"
 #include <json/json.h>
 #include <json/reader.h>
+#include <glog/logging.h>
 using namespace std;
 
-std::string get_toKen_by_url(const std::string &url) {
+std::string get_toKen_by_url(const std::string &url, CURL *cu) {
 	std::string toKen = "";
 	Json::Value root;
 
 	string str = "";
-	str = CurlWrapper::get_instance()->access_http(url.c_str());
+        if (cu == NULL) {
+          return "";
+        }
+	str = CurlWrapper::get_instance()->access_http(url.c_str(), cu);
 	Json::Reader reader; 
 	if (str.length() == 0)
 		return "";
@@ -35,12 +39,15 @@ std::string get_toKen_by_url(const std::string &url) {
 	return toKen;
 }
 
-std::string get_value_by_url(const std::string &url) {
+std::string get_value_by_url(const std::string &url, CURL *cu) {
   std::string value = "";
   Json::Value root;
 
   string str = "";
-  str = CurlWrapper::get_instance()->access_http(url.c_str());
+  if (cu == NULL) {
+     return "";
+  }
+  str = CurlWrapper::get_instance()->access_http(url.c_str(), cu);
   if (str == "") {
     printf("access %s failed\n", url.c_str());
   }

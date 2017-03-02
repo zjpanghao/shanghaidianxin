@@ -16,9 +16,9 @@
 #include "curl/curl.h"
 #include "KafkaWrapper.h"
 
-std::string get_toKen_by_url(const std::string &url);
+std::string get_toKen_by_url(const std::string &url, CURL *cu);
 
-std::string get_value_by_url(const std::string &url);
+std::string get_value_by_url(const std::string &url, CURL *cu);
 
 void init_kafka();
 

@@ -3,12 +3,14 @@
 #include "json_data.h"
 #include <json/json.h>
 #include <json/reader.h>
+#include "glog/logging.h"
 #include "CurlWrapper.h"
 #include "base64.h"
 #include "common.h"
 #include "KafkaWrapper.h"
+#include "tele_mat.h"
 TeleTaskConsumer * TeleTaskConsumer::instance_ = NULL;
-TeleTaskConsumer::TeleTaskConsumer() {
+TeleTaskConsumer::TeleTaskConsumer():total_fail_first_(0), total_refetch_success_(0) {
   url_pre_ = "http://61.129.39.71/telecom-dmp/kv/getValueByKey?token=";
   url_table_ = "&table=kunyan_to_upload_inter_tab_sk&key=";
   url_flag_ = "_kunyan_";
@@ -23,32 +25,76 @@ TeleTaskConsumer* TeleTaskConsumer::GetInstance() {
 
 int TeleTaskConsumer::Init(int nthread) {
  pthread_t *consumer_id = new pthread_t[nthread];
+ pthread_t refetch_id;
  int i;
+ pthread_mutex_init(&fail_task_mutex_, NULL);
  for (i = 0; i < nthread; i++) {
    pthread_create(&consumer_id[i], NULL, TeleConsumerThread, 0); 
  }
+ pthread_create(&refetch_id, NULL, TeleConsumerRefetchThread, 0); 
  return 0; 
 }
+
+void TeleTaskConsumer::ShowState() {
+  LOG(INFO) << "Total_fail_first :" << total_fail_first_ << "total_refetch_success:" << total_refetch_success_ << std::endl;
+}
+
+bool TeleTaskConsumer::SaveFailTask(TeleTask *task) {
+  bool r = false;
+  pthread_mutex_lock(&fail_task_mutex_);
+  if (fail_task_list_.size() < 300) {
+    fail_task_list_.push_back(task);
+    r = true;
+  }
+  task->retry_count++;
+  pthread_mutex_unlock(&fail_task_mutex_);
+  return r;
+}
+
+TeleTask *TeleTaskConsumer::GetFailTask() {
+  TeleTask *task = NULL;
+  pthread_mutex_lock(&fail_task_mutex_);
+  
+  if (!fail_task_list_.empty()) {
+    task = fail_task_list_.front();
+    fail_task_list_.pop_front();
+  }
+  pthread_mutex_unlock(&fail_task_mutex_);
+  return task;
+}
+
 void *TeleTaskConsumer::TeleConsumerThread(void *arg) {
   TeleTaskProducer *producer = TeleTaskProducer::GetInstance();
   TeleTaskConsumer *consumer = TeleTaskConsumer::GetInstance();
+  int count = 0;
+  CURL *curl = NULL;
+  curl = CurlWrapper::get_instance()->CreateCurl();
   while (true) {
     TeleTask *task = producer->GetTask();
     if (task == NULL) {
-      printf("fetch NUll task\n");
+      LOG(ERROR) << "fetch NUll task";
       sleep(1);
+
+      if (count++ >= 600) {
+        consumer->ShowState();
+        count = 0;
+      }
       continue;
     }
-    printf("fetch task %d\n", task->index);
+    LOG(INFO) << "fetch task " <<  task->index;
     std::string url = consumer->BuildUrlFromTask(task);
-    std::string value = get_value_by_url(url);    
+    std::string value = get_value_by_url(url, curl);    
     if (value == "") {
-      printf("fetch http error index:%d, url:%s\n", task->index, url.c_str());
-      delete task;
+      consumer->total_fail_first_++;
+      LOG(ERROR) << "fetch http error index:" << task->index << "url:" << url;
+      if (consumer->SaveFailTask(task) == false) {
+        LOG(ERROR) << "Save refetch task failed index" << task->index;
+        delete task;
+      }
       continue;
     }
     if (task->index == 0) {
-      printf("Fetch url:%s value:%s\n", url.c_str(), value.c_str());
+      LOG(INFO) << "Fetch url: " << url << "value:" << value;
     }
     std::string json_value = consumer->GetJsonValue(value);
     if (json_value == "") {
@@ -57,7 +103,7 @@ void *TeleTaskConsumer::TeleConsumerThread(void *arg) {
     }
 
     if (json_value == "error" || json_value == "errortoken" ) {
-      printf("json value error: %s url:%s\n", value.c_str(), url.c_str());
+      LOG(ERROR) << "json value " << value.c_str() << "url " <<  url;
       if (task->index == 0 && json_value == "errortoken")
         producer->SetIdentityError();
       delete task;
@@ -66,19 +112,79 @@ void *TeleTaskConsumer::TeleConsumerThread(void *arg) {
      
     std::string base64_result = consumer->DeBase64(json_value); 
     if (base64_result.length() == 0) {
-      printf("process error value:%s \n", json_value.c_str());
+      LOG(ERROR) << "process error value:" <<  json_value;
         delete task;
         continue;
     }
     if (consumer->Store(base64_result.c_str(), base64_result.length()) != 0) {
-      printf("push data failed time:%s, value:%s\n", task->time_str.c_str(), base64_result.c_str());
+      LOG(ERROR) << "push data failed time:" << task->time_str.c_str() <<"value:" <<  base64_result.c_str();
     } else {
-      printf("push data success time: %s value:%s\n", task->time_str.c_str(), base64_result.c_str());
+      LOG(INFO) << "task_index:" << task->index <<" push data success time: " << task->time_str.c_str() << "value:" <<  base64_result.c_str();
+      SET_BIT_INDEX(tele::GetShareMem(), task->minute_index, task->index);
     }
     delete task; 
   }
   
 
+}
+
+void *TeleTaskConsumer::TeleConsumerRefetchThread(void *arg) {
+  TeleTaskConsumer *consumer = TeleTaskConsumer::GetInstance();
+  CURL *cu = CurlWrapper::get_instance()->CreateCurl();
+  while (true) {
+    sleep(1);
+    TeleTask *task = consumer->GetFailTask();
+    if (task == NULL) {
+      sleep(1);
+      continue;
+    }
+    LOG(INFO) << "refetch task: " <<  task->index <<" "<< task->time_str;
+    std::string url = consumer->BuildUrlFromTask(task);
+    std::string value = get_value_by_url(url, cu);    
+    if (value == "") {
+      LOG(ERROR) << "refetch http error index:" << task->index << "url:" << url;
+      if (task->retry_count < 3) {
+        if (consumer->SaveFailTask(task) == false) {
+          LOG(ERROR) << "Save refetch task failed index" << task->index;
+          delete task;
+          continue;
+        }
+      } else {
+        LOG(ERROR) << "Task failed more times index "<< task->index << " key" << task->time_str << std::endl;
+        delete task;
+      }
+      continue;
+    }
+    consumer->total_refetch_success_++;
+    if (task->index == 0) {
+      LOG(INFO) << "reFetch url: " << url << "value:" << value;
+    }
+    std::string json_value = consumer->GetJsonValue(value);
+    if (json_value == "") {
+      delete task;
+      continue;
+    }
+
+    if (json_value == "error" || json_value == "errortoken" ) {
+      LOG(ERROR) << "json value " << value.c_str() << "url " <<  url;
+      delete task;
+      continue;
+    }
+     
+    std::string base64_result = consumer->DeBase64(json_value); 
+    if (base64_result.length() == 0) {
+      LOG(ERROR) << "refetch process error value:" <<  json_value;
+        delete task;
+        continue;
+    }
+    if (consumer->Store(base64_result.c_str(), base64_result.length()) != 0) {
+      LOG(ERROR) << "refetch push data failed time:" << task->time_str.c_str() <<"value:" <<  base64_result.c_str();
+    } else {
+      LOG(INFO) << "refetch task_index:" << task->index <<" push data success time: " << task->time_str.c_str() << "value:" <<  base64_result.c_str();
+    }
+    delete task; 
+  }
+  
 }
 std::string TeleTaskConsumer::GetJsonValue(std::string value) {
   Json::Reader reader; 
