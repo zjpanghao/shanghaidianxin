@@ -4,6 +4,12 @@
 #include <queue>
 #include <string>
 #include <curl/curl.h>
+#define MAX_FETCH_INDEX 10000
+enum TaskType {
+TASK_NORMAL = 0,
+TASK_DELAY = 1
+
+};
 struct tm;
 struct TeleTask {
   int index;
@@ -11,8 +17,22 @@ struct TeleTask {
   std::string token;
   std::string time_str;
   int retry_count;
+  TaskType type;
 };
 
+class TeleTaskFactory {
+ public:
+  static TeleTask* BuildTask(int index, std::string token, std::string time_str, TaskType type) {
+    TeleTask *ta = new TeleTask;
+    ta->index = index;
+    ta->time_str = time_str;
+    ta->token = token;
+    ta->type = type;
+    ta->minute_index = 0;
+    ta->retry_count = 0;
+    return ta;
+  }
+};
 class TeleTaskProducer {
  public:
   TeleTaskProducer();
@@ -40,6 +60,7 @@ class TeleTaskProducer {
   void BuildTeleTimeStr(struct tm *current_time, char *buffer);
   void CheckTokenTimeout();
   std::queue<TeleTask*> producer_queue_;
+  std::queue<TeleTask*> producer_delay_queue_;
   pthread_mutex_t task_lock_;
   pthread_cond_t not_empty_;
   bool NeedUpdate();

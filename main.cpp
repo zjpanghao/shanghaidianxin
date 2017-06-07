@@ -54,6 +54,8 @@ static void glog_init(std::string name) {
 bool IsSlave() {
   return is_slave_g;
 }
+
+const char *ver = "1.1.2";
 int main(int argc, char* argv[]) {
   pthread_t tid[10] = {0};
   int code = 0;
@@ -62,6 +64,7 @@ int main(int argc, char* argv[]) {
   TeleCommand cmd;
   int delay_min = 3;
   const char *kafka_server = "127.0.0.1";
+  daemon(1, 0);
   glog_init(argv[0]);
   tele::TeleMem *mem = tele::TeleShmLoad();
   LOG(INFO) << mem;
@@ -91,6 +94,7 @@ int main(int argc, char* argv[]) {
       is_slave_g = true;
     }
   }
+  LOG(INFO) << ver;
   test_info_g = new wrapper_Info;
   init_kafka(test_info_g, kafka_server);
   pthread_t producerid;

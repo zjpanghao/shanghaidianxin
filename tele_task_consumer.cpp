@@ -9,6 +9,7 @@
 #include "common.h"
 #include "KafkaWrapper.h"
 #include "tele_mat.h"
+#define MAX_DELAY_SIZE 20000
 TeleTaskConsumer * TeleTaskConsumer::instance_ = NULL;
 TeleTaskConsumer::TeleTaskConsumer():total_fail_first_(0), total_refetch_success_(0) {
   url_pre_ = "http://61.129.39.71/telecom-dmp/kv/getValueByKey?token=";
@@ -63,14 +64,35 @@ TeleTask *TeleTaskConsumer::GetFailTask() {
   return task;
 }
 
+void TeleTaskConsumer::CreateExtroTasks(std::string token, std::string time_str, std::queue<TeleTask*> *delay_queue) {
+  
+ int i = MAX_FETCH_INDEX;
+ while (i < 30000) {
+   TeleTask *ta = TeleTaskFactory::BuildTask(i, token, time_str, TASK_DELAY);
+   if (ta && delay_queue->size() < MAX_DELAY_SIZE)
+     delay_queue->push(ta);
+   else
+     delete ta;
+   i++;
+ }
+
+}
+
 void *TeleTaskConsumer::TeleConsumerThread(void *arg) {
   TeleTaskProducer *producer = TeleTaskProducer::GetInstance();
   TeleTaskConsumer *consumer = TeleTaskConsumer::GetInstance();
   int count = 0;
   CURL *curl = NULL;
   curl = CurlWrapper::get_instance()->CreateCurl();
+  std::queue<TeleTask*>  delay_task_queue;  
   while (true) {
-    TeleTask *task = producer->GetTask();
+    TeleTask *task = NULL;
+    if (delay_task_queue.empty()) {
+      task = producer->GetTask();
+    } else {
+      task = delay_task_queue.front();
+      delay_task_queue.pop();
+    }
     if (task == NULL) {
       LOG(ERROR) << "fetch NUll task";
       sleep(1);
@@ -95,7 +117,7 @@ void *TeleTaskConsumer::TeleConsumerThread(void *arg) {
     }
     if (task->index == 0) {
       LOG(INFO) << "Fetch url: " << url << "value:" << value;
-    }
+    } 
     std::string json_value = consumer->GetJsonValue(value);
     if (json_value == "") {
       delete task;
@@ -116,11 +138,18 @@ void *TeleTaskConsumer::TeleConsumerThread(void *arg) {
         delete task;
         continue;
     }
+
+
     if (consumer->Store(base64_result.c_str(), base64_result.length()) != 0) {
       LOG(ERROR) << "push data failed time:" << task->time_str.c_str() <<"value:" <<  base64_result.c_str();
     } else {
       LOG(INFO) << "task_index:" << task->index <<" push data success time: " << task->time_str.c_str() << "value:" <<  base64_result.c_str();
-      SET_BIT_INDEX(tele::GetShareMem(), task->minute_index, task->index);
+      if (task->type == TASK_NORMAL && task->index < MAX_FETCH_INDEX) {
+        SET_BIT_INDEX(tele::GetShareMem(), task->minute_index, task->index);
+        if (task->index == 9999) {
+          consumer->CreateExtroTasks(task->token, task->time_str, &delay_task_queue);
+        }
+      }
     }
     delete task; 
   }

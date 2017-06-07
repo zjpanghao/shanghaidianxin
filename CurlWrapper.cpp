@@ -124,6 +124,7 @@ CURL *CurlWrapper::CreateCurl() {
         CURLcode code;
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 3);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
         /*SET connect type: keep-alive*/
         struct curl_slist *header_list = NULL;
         header_list = curl_slist_append(header_list, "Connection: keep-alive");

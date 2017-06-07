@@ -11,7 +11,6 @@
 #include "common.h"
 #define BATCHNUMS 200
 #define MAX_TASK_QUEUE_SIZE 600 
-#define MAX_FETCH_INDEX 10000
 TeleTaskProducer* TeleTaskProducer::instance_ = NULL;
 TeleTaskProducer* TeleTaskProducer::GetInstance() {
   if (instance_ == NULL) {
@@ -27,7 +26,11 @@ void TeleTaskProducer::SetIdentityError() {
 }
 
 bool TeleTaskProducer::UpdateToken() {
-  token_str_ = get_toKen_by_url(url_fetch_token_, cu_);
+  std::string token_str;
+  token_str = get_toKen_by_url(url_fetch_token_, cu_);
+  if (token_str.length() == 0)
+    return false;
+  token_str_ = token_str;
   LOG(INFO) << "The token " << token_str_;
   need_update_token_ = false;
   token_update_minutes_ = 0;
@@ -144,16 +147,16 @@ int TeleTaskProducer::PushTaskBatch() {
     if (!IsSlave()) {
       CLEAR_SET(tele::GetShareMem(), minute_index, i);
     } else if (IS_SET(tele::GetShareMem(), minute_index, i)) {
-      CLEAR_SET(tele::GetShareMem(), minute_index, i);
       n++;
       continue;
     }
-    TeleTask * task = new TeleTask;
+    TeleTask * task = TeleTaskFactory::BuildTask(i, token_str_, fetch_time_str_, TASK_NORMAL);
+    if (!task) {
+      n++;
+      continue;
+    }
+      
     task->minute_index = minute_index;
-    task->index = i;
-    task->token = token_str_;
-    task->time_str = fetch_time_str_;
-    task->retry_count = 0;
     if (PushTask(task) < 0) {
       delete task;
       break;

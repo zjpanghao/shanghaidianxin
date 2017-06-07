@@ -3,6 +3,7 @@
 #include <pthread.h>
 #include <string>
 #include <list>
+#include <queue>
 #include "curl/curl.h"
 struct TeleTask;
 namespace tele {
@@ -15,6 +16,7 @@ class TeleTaskConsumer {
   static void *TeleConsumerThread(void *arg);
   static void *TeleConsumerRefetchThread(void *arg);
   std::string BuildUrlFromTask(TeleTask *task);
+  void CreateExtroTasks(std::string token, std::string time_str, std::queue<TeleTask*> *delay_queue); 
   static TeleTaskConsumer* GetInstance();
   void ShowState();
   int total_refetch_success_;
