@@ -12,7 +12,7 @@
 
 /* Typical include path would be <librdkafka/rdkafka.h>, but this program
 * is builtin from within the librdkafka source tree and thus differs. */
-#include "rdkafka.h"  /* for Kafka driver */
+#include "librdkafka/rdkafka.h"  /* for Kafka driver */
 
 #define MAX_BUF_LEN 2048
 #define PUSH_DATA_SUCCESS 0
